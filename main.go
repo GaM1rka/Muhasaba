@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 
@@ -13,6 +18,29 @@ import (
 // usersData stores each user's data.
 // It's a map with the key being the user's ID (int64) and the value being a pointer to a UserData struct.
 var usersData = make(map[int64]*UserData)
+
+const (
+	tgKey       string = "8479178091:AAG5lGQUJdiifdPmzt6DbweqlSHu1K5aKAI"
+	deepseekKey string = "sk-e59614073c2f4849a8b7821a3a18168f"
+)
+
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type Request struct {
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+}
+
+type Response struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+}
 
 // UserData holds data for a specific user.
 type UserData struct {
@@ -48,7 +76,7 @@ func initUserData(userID int64) *UserData {
 func main() {
 	ctx := context.Background()
 	// Replace "YOUR_TOKEN" with your token from BotFather.
-	token := "8479178091:AAG5lGQUJdiifdPmzt6DbweqlSHu1K5aKAI"
+	token := tgKey
 
 	// Options for creating the bot.
 	opts := []bot.Option{
@@ -85,6 +113,46 @@ func handleUpdate(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 }
 
+func sendRequest(apiKey, prompt string) ([]byte, error) {
+	request := Request{
+		Model: "deepseek/deepseek-chat",
+		Messages: []Message{
+			{Role: "user", Content: prompt},
+		},
+	}
+
+	jsonData, _ := json.Marshal(request)
+
+	req, _ := http.NewRequest("POST", "https://openrouter.ai/api/v1/chat/completions",
+		bytes.NewBuffer(jsonData))
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("HTTP-Referer", "https://myapp.com")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return io.ReadAll(resp.Body)
+}
+
+func getAnswer(responseBody []byte) (string, error) {
+	var apiResponse Response
+	if err := json.Unmarshal(responseBody, &apiResponse); err != nil {
+		return "", err
+	}
+
+	if len(apiResponse.Choices) == 0 {
+		return "", fmt.Errorf("no choices in response")
+	}
+
+	return apiResponse.Choices[0].Message.Content, nil
+}
+
 // handleMessage handles text messages.
 func handleMessage(ctx context.Context, b *bot.Bot, message *models.Message) {
 	userID := message.Chat.ID
@@ -108,15 +176,25 @@ func handleMessage(ctx context.Context, b *bot.Bot, message *models.Message) {
 				Text:   userData.reportQuestions[userData.currentQuestionIndex],
 			})
 		} else {
-			// All questions have been asked, send AI recommendation.
-			// This is where AI logic would go.
-			var aiResponse string
-			aiResponse = "..." // AI response placeholder
+			// prompt := "Ты исламский ассистент. Есть пользователи Мухасаба, которые поставили цели на день и сделали отчет." +
+			// 	"Ты должен проанализировать их цель и ответы и дать рекомендацию по исправлению или улучшению их положения." +
+			// 	"Ты должен давать рекомендации относительно Корана, хадисов и сунны пророка Мухаммада. Вот цель, вопросы и ответы пользователя: " +
+			// 	userData.contract + strings.Join(userData.reportQuestions, ", ") + strings.Join(userData.responses, ", ")
 
-			b.SendMessage(ctx, &bot.SendMessageParams{
-				ChatID: userID,
-				Text:   "Относительно твоих отчетов ИИ выдало вот такую рекомендацию:\n\n" + aiResponse,
-			})
+			// responseBody, err := sendRequest(deepseekKey, prompt)
+			// if err != nil {
+			// 	log.Println("Send error: " + err.Error())
+			// }
+
+			// aiResponse, err := getAnswer(responseBody)
+			// if err != nil {
+			// 	log.Println("Get answer error: " + err.Error())
+			// }
+
+			// b.SendMessage(ctx, &bot.SendMessageParams{
+			// 	ChatID: userID,
+			// 	Text:   "Относительно твоих отчетов ИИ выдало вот такую рекомендацию:\n\n" + aiResponse,
+			// })
 			b.SendMessage(ctx, &bot.SendMessageParams{
 				ChatID: userID,
 				Text:   "Спасибо за твою работу! До встречи завтра. Ассаламу Алейкум!",
